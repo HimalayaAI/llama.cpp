@@ -257,6 +257,8 @@ struct llama_layer {
     struct ggml_tensor * wv_enc    = nullptr;
     struct ggml_tensor * wo_enc    = nullptr;
     struct ggml_tensor * wqkv_gate = nullptr;
+    struct ggml_tensor * nanochat_value_embd = nullptr;
+    struct ggml_tensor * nanochat_ve_gate    = nullptr;
 
     // relative position bias
     struct ggml_tensor * attn_rel_b       = nullptr;
@@ -532,6 +534,12 @@ struct llama_model {
     struct ggml_tensor * output          = nullptr;
     struct ggml_tensor * output_b        = nullptr;
     struct ggml_tensor * output_norm_enc = nullptr;
+
+    struct ggml_tensor * nanochat_resid_lambdas  = nullptr;
+    struct ggml_tensor * nanochat_x0_lambdas     = nullptr;
+    struct ggml_tensor * nanochat_smear_gate     = nullptr;
+    struct ggml_tensor * nanochat_smear_lambda   = nullptr;
+    struct ggml_tensor * nanochat_backout_lambda = nullptr;
 
     // classifier
     struct ggml_tensor * cls       = nullptr;

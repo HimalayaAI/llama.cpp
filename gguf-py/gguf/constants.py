@@ -402,6 +402,7 @@ class MODEL_ARCH(IntEnum):
     STABLELM         = auto()
     QWEN             = auto()
     QWEN2            = auto()
+    NANOCHAT         = auto()
     QWEN2MOE         = auto()
     QWEN2VL          = auto()
     QWEN3            = auto()
@@ -527,6 +528,11 @@ class MODEL_TENSOR(IntEnum):
     DENSE_2_OUT          = auto() # embeddinggemma 2_Dense
     DENSE_3_OUT          = auto() # embeddinggemma 3_Dense
     OUTPUT_NORM          = auto()
+    NANOCHAT_RESID_LAMBDAS  = auto()
+    NANOCHAT_X0_LAMBDAS     = auto()
+    NANOCHAT_SMEAR_GATE     = auto()
+    NANOCHAT_SMEAR_LAMBDA   = auto()
+    NANOCHAT_BACKOUT_LAMBDA = auto()
     ROPE_FREQS           = auto()
     ROPE_FACTORS_LONG    = auto()
     ROPE_FACTORS_SHORT   = auto()
@@ -542,6 +548,8 @@ class MODEL_TENSOR(IntEnum):
     ATTN_ROT_EMBD        = auto()
     ATTN_SINKS           = auto()
     ATTN_GATE            = auto()
+    NANOCHAT_VALUE_EMBD  = auto()
+    NANOCHAT_VE_GATE     = auto()
     FFN_GATE_INP         = auto()
     FFN_GATE_INP_SHEXP   = auto()
     FFN_NORM             = auto()
@@ -916,6 +924,7 @@ MODEL_ARCH_NAMES: dict[MODEL_ARCH, str] = {
     MODEL_ARCH.STABLELM:         "stablelm",
     MODEL_ARCH.QWEN:             "qwen",
     MODEL_ARCH.QWEN2:            "qwen2",
+    MODEL_ARCH.NANOCHAT:         "nanochat",
     MODEL_ARCH.QWEN2MOE:         "qwen2moe",
     MODEL_ARCH.QWEN2VL:          "qwen2vl",
     MODEL_ARCH.QWEN3:            "qwen3",
@@ -1038,6 +1047,11 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
     MODEL_TENSOR.POS_EMBD:                  "position_embd",
     MODEL_TENSOR.OUTPUT_NORM:               "output_norm",
     MODEL_TENSOR.OUTPUT:                    "output",
+    MODEL_TENSOR.NANOCHAT_RESID_LAMBDAS:    "nanochat_resid_lambdas",
+    MODEL_TENSOR.NANOCHAT_X0_LAMBDAS:       "nanochat_x0_lambdas",
+    MODEL_TENSOR.NANOCHAT_SMEAR_GATE:       "nanochat_smear_gate",
+    MODEL_TENSOR.NANOCHAT_SMEAR_LAMBDA:     "nanochat_smear_lambda",
+    MODEL_TENSOR.NANOCHAT_BACKOUT_LAMBDA:   "nanochat_backout_lambda",
     MODEL_TENSOR.DENSE_2_OUT:                "dense_2", # embeddinggemma 2_Dense
     MODEL_TENSOR.DENSE_3_OUT:                "dense_3", # embeddinggemma 2_Dense
     MODEL_TENSOR.ROPE_FREQS:                "rope_freqs",
@@ -1053,6 +1067,8 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
     MODEL_TENSOR.ATTN_ROT_EMBD:             "blk.{bid}.attn_rot_embd",
     MODEL_TENSOR.ATTN_SINKS:                "blk.{bid}.attn_sinks",
     MODEL_TENSOR.ATTN_GATE:                 "blk.{bid}.attn_gate",
+    MODEL_TENSOR.NANOCHAT_VALUE_EMBD:       "blk.{bid}.nanochat_value_embd",
+    MODEL_TENSOR.NANOCHAT_VE_GATE:          "blk.{bid}.nanochat_ve_gate",
     MODEL_TENSOR.ATTN_Q_NORM:               "blk.{bid}.attn_q_norm",
     MODEL_TENSOR.ATTN_K_NORM:               "blk.{bid}.attn_k_norm",
     MODEL_TENSOR.ATTN_OUT_NORM:             "blk.{bid}.attn_output_norm",
@@ -1920,6 +1936,23 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
         MODEL_TENSOR.ATTN_OUT,
         MODEL_TENSOR.FFN_NORM,
         MODEL_TENSOR.FFN_GATE,
+        MODEL_TENSOR.FFN_DOWN,
+        MODEL_TENSOR.FFN_UP,
+    ],
+    MODEL_ARCH.NANOCHAT: [
+        MODEL_TENSOR.TOKEN_EMBD,
+        MODEL_TENSOR.OUTPUT,
+        MODEL_TENSOR.NANOCHAT_RESID_LAMBDAS,
+        MODEL_TENSOR.NANOCHAT_X0_LAMBDAS,
+        MODEL_TENSOR.NANOCHAT_SMEAR_GATE,
+        MODEL_TENSOR.NANOCHAT_SMEAR_LAMBDA,
+        MODEL_TENSOR.NANOCHAT_BACKOUT_LAMBDA,
+        MODEL_TENSOR.ATTN_Q,
+        MODEL_TENSOR.ATTN_K,
+        MODEL_TENSOR.ATTN_V,
+        MODEL_TENSOR.ATTN_OUT,
+        MODEL_TENSOR.NANOCHAT_VALUE_EMBD,
+        MODEL_TENSOR.NANOCHAT_VE_GATE,
         MODEL_TENSOR.FFN_DOWN,
         MODEL_TENSOR.FFN_UP,
     ],

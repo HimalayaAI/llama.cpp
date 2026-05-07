@@ -3812,7 +3812,10 @@ class QwenModel(TextModel):
 
     @staticmethod
     def token_bytes_to_string(b):
-        from transformers.models.gpt2.tokenization_gpt2 import bytes_to_unicode  # ty: ignore[unresolved-import]
+        try:
+            from transformers.models.gpt2.tokenization_gpt2 import bytes_to_unicode  # ty: ignore[unresolved-import]
+        except ImportError:
+            from gguf.vocab import bytes_to_unicode
         byte_encoder = bytes_to_unicode()
         return ''.join([byte_encoder[ord(char)] for char in b.decode('latin-1')])
 
@@ -3835,6 +3838,134 @@ class QwenModel(TextModel):
 
     def set_vocab(self):
         self._set_vocab_qwen()
+
+
+@ModelBase.register("NanochatForCausalLM")
+class NanochatModel(TextModel):
+    model_arch = gguf.MODEL_ARCH.NANOCHAT
+
+    @staticmethod
+    def _has_value_embd(layer_idx: int, n_layer: int) -> bool:
+        return layer_idx % 2 == (n_layer - 1) % 2
+
+    def set_vocab(self):
+        import pickle
+
+        with open(self.dir_model / "tokenizer.pkl", "rb") as f:
+            enc = pickle.load(f)
+
+        mergeable_ranks: dict[bytes, int] = enc._mergeable_ranks
+        special_tokens: dict[str, int] = enc._special_tokens
+        vocab: dict[str, int] = {
+            QwenModel.token_bytes_to_string(token): rank
+            for token, rank in mergeable_ranks.items()
+        }
+
+        merges: list[str] = []
+        for token, rank in sorted(mergeable_ranks.items(), key=lambda item: item[1]):
+            if len(token) == 1:
+                continue
+            merged = QwenModel.bpe(mergeable_ranks, token, max_rank=rank)
+            if len(merged) == 2:
+                merges.append(" ".join(QwenModel.token_bytes_to_string(part) for part in merged))
+
+        reverse_vocab = {id_: token for token, id_ in {**vocab, **special_tokens}.items()}
+        tokens: list[str] = []
+        toktypes: list[int] = []
+
+        vocab_size = self.hparams["vocab_size"]
+        for i in range(vocab_size):
+            token = reverse_vocab.get(i)
+            if token is None:
+                tokens.append(f"[PAD{i}]")
+                toktypes.append(gguf.TokenType.UNUSED)
+            else:
+                tokens.append(token)
+                toktypes.append(gguf.TokenType.CONTROL if i in special_tokens.values() else gguf.TokenType.NORMAL)
+
+        self.gguf_writer.add_tokenizer_model("gpt2")
+        self.gguf_writer.add_tokenizer_pre("nanochat")
+        self.gguf_writer.add_token_list(tokens)
+        self.gguf_writer.add_token_types(toktypes)
+        self.gguf_writer.add_token_merges(merges)
+        self.gguf_writer.add_bos_token_id(self.hparams.get("bos_token_id", special_tokens.get("<|bos|>", 32759)))
+        self.gguf_writer.add_eos_token_id(self.hparams.get("eos_token_id", special_tokens.get("<|bos|>", 32759)))
+        self.gguf_writer.add_pad_token_id(self.hparams.get("pad_token_id", special_tokens.get("<|bos|>", 32759)))
+        self.gguf_writer.add_add_bos_token(True)
+        self.gguf_writer.add_add_eos_token(False)
+        # End-of-turn for chat: model emits <|assistant_end|> to close its turn.
+        # llama.cpp stops generation at eot in chat-y modes.
+        if "<|assistant_end|>" in special_tokens:
+            self.gguf_writer.add_eot_token_id(int(special_tokens["<|assistant_end|>"]))
+
+        # Nanochat instruction-tuned chat format using <|user_start|>...<|user_end|><|assistant_start|>...<|assistant_end|>.
+        # The tokenizer has no system role; system content is emitted as a leading user turn.
+        chat_template = (
+            "{% for message in messages %}"
+            "{% if message['role'] == 'assistant' %}"
+            "<|assistant_start|>{{ message['content'] }}<|assistant_end|>"
+            "{% else %}"
+            "<|user_start|>{{ message['content'] }}<|user_end|>"
+            "{% endif %}"
+            "{% endfor %}"
+            "{% if add_generation_prompt %}<|assistant_start|>{% endif %}"
+        )
+        self.gguf_writer.add_chat_template(chat_template)
+
+    def set_gguf_parameters(self):
+        n_embd = self.hparams["n_embd"]
+        n_head = self.hparams["n_head"]
+
+        self.gguf_writer.add_context_length(self.hparams["sequence_len"])
+        self.gguf_writer.add_embedding_length(n_embd)
+        self.gguf_writer.add_feed_forward_length(4 * n_embd)
+        self.gguf_writer.add_block_count(self.hparams["n_layer"])
+        self.gguf_writer.add_head_count(n_head)
+        self.gguf_writer.add_head_count_kv(self.hparams["n_kv_head"])
+        self.gguf_writer.add_key_length(n_embd // n_head)
+        self.gguf_writer.add_value_length(n_embd // n_head)
+        self.gguf_writer.add_rope_dimension_count(n_embd // n_head)
+        self.gguf_writer.add_rope_freq_base(100000.0)
+        self.gguf_writer.add_layer_norm_rms_eps(float(torch.finfo(torch.float32).eps))
+        self.gguf_writer.add_file_type(self.ftype)
+
+    def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
+        direct_map = {
+            "model.transformer.wte.weight": self.format_tensor_name(gguf.MODEL_TENSOR.TOKEN_EMBD),
+            "model.lm_head.weight": self.format_tensor_name(gguf.MODEL_TENSOR.OUTPUT),
+            "model.resid_lambdas": self.format_tensor_name(gguf.MODEL_TENSOR.NANOCHAT_RESID_LAMBDAS),
+            "model.x0_lambdas": self.format_tensor_name(gguf.MODEL_TENSOR.NANOCHAT_X0_LAMBDAS),
+            "model.smear_gate.weight": self.format_tensor_name(gguf.MODEL_TENSOR.NANOCHAT_SMEAR_GATE),
+            "model.smear_lambda": self.format_tensor_name(gguf.MODEL_TENSOR.NANOCHAT_SMEAR_LAMBDA),
+            "model.backout_lambda": self.format_tensor_name(gguf.MODEL_TENSOR.NANOCHAT_BACKOUT_LAMBDA),
+        }
+
+        if name in direct_map:
+            if data_torch.ndim == 0:
+                data_torch = data_torch.reshape(1)
+            yield direct_map[name], data_torch
+            return
+
+        if bid is None:
+            raise ValueError(f"Can not map tensor {name!r}")
+
+        layer_prefix = f"model.transformer.h.{bid}."
+        layer_map = {
+            layer_prefix + "attn.c_q.weight": self.format_tensor_name(gguf.MODEL_TENSOR.ATTN_Q, bid),
+            layer_prefix + "attn.c_k.weight": self.format_tensor_name(gguf.MODEL_TENSOR.ATTN_K, bid),
+            layer_prefix + "attn.c_v.weight": self.format_tensor_name(gguf.MODEL_TENSOR.ATTN_V, bid),
+            layer_prefix + "attn.c_proj.weight": self.format_tensor_name(gguf.MODEL_TENSOR.ATTN_OUT, bid),
+            layer_prefix + "mlp.c_fc.weight": self.format_tensor_name(gguf.MODEL_TENSOR.FFN_UP, bid),
+            layer_prefix + "mlp.c_proj.weight": self.format_tensor_name(gguf.MODEL_TENSOR.FFN_DOWN, bid),
+            layer_prefix + "attn.ve_gate.weight": self.format_tensor_name(gguf.MODEL_TENSOR.NANOCHAT_VE_GATE, bid),
+            f"model.value_embeds.{bid}.weight": self.format_tensor_name(gguf.MODEL_TENSOR.NANOCHAT_VALUE_EMBD, bid),
+        }
+
+        if name in layer_map:
+            yield layer_map[name], data_torch
+            return
+
+        raise ValueError(f"Can not map tensor {name!r}")
 
 
 @ModelBase.register(

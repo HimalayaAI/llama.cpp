@@ -82,6 +82,8 @@ static llama_model * llama_model_mapping(llm_arch arch, const llama_model_params
             return new llama_model_qwen(params);
         case LLM_ARCH_QWEN2:
             return new llama_model_qwen2(params);
+        case LLM_ARCH_NANOCHAT:
+            return new llama_model_nanochat(params);
         case LLM_ARCH_DREAM:
             return new llama_model_dream(params);
         case LLM_ARCH_LLADA:
@@ -2258,6 +2260,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
         case LLM_ARCH_BITNET:
         case LLM_ARCH_QWEN:
         case LLM_ARCH_QWEN2:
+        case LLM_ARCH_NANOCHAT:
         case LLM_ARCH_DREAM:
         case LLM_ARCH_QWEN2MOE:
         case LLM_ARCH_QWEN3:
