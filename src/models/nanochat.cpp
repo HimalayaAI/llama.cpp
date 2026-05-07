@@ -68,7 +68,12 @@ llama_model_nanochat::graph::graph(const llama_model & model, const llm_graph_pa
         ggml_tensor * tail  = ggml_view_2d(ctx0, inpL, n_embd, n_tokens - 1, inpL->nb[1], inpL->nb[1]);
         ggml_tensor * prev  = ggml_view_2d(ctx0, inpL, n_embd, n_tokens - 1, inpL->nb[1], 0);
 
+        // The view picks the first 24 channels of each token, so it's
+        // strided (row stride = full n_embd row). Some backends (notably
+        // SYCL) crash in mul_mat with a strided f32 src1 when src0 is f16.
+        // Force a contiguous copy before the matmul.
         ggml_tensor * gate_inp = ggml_view_2d(ctx0, inpL, 24, n_tokens - 1, inpL->nb[1], inpL->nb[1]);
+        gate_inp               = ggml_cont(ctx0, gate_inp);
         ggml_tensor * gate     = ggml_mul_mat(ctx0, model.nanochat_smear_gate, gate_inp);
         gate = ggml_sigmoid(ctx0, gate);
         gate = ggml_mul(ctx0, gate, model.nanochat_smear_lambda);
@@ -113,7 +118,11 @@ llama_model_nanochat::graph::graph(const llama_model & model, const llm_graph_pa
                 ve = ggml_reshape_3d(ctx0, ve, n_embd_head, n_head_kv, n_tokens);
                 cb(ve, "value_embd", il);
 
+                // First 12 channels of each token — strided. ggml_cont
+                // before mul_mat to avoid a SYCL backend crash in the
+                // f16 src0 / f32 strided src1 path.
                 ggml_tensor * gate_inp = ggml_view_2d(ctx0, cur, 12, n_tokens, cur->nb[1], 0);
+                gate_inp               = ggml_cont(ctx0, gate_inp);
                 ggml_tensor * gate     = ggml_mul_mat(ctx0, model.layers[il].nanochat_ve_gate, gate_inp);
                 gate = ggml_scale(ctx0, ggml_sigmoid(ctx0, gate), 3.0f);
                 gate = ggml_reshape_3d(ctx0, gate, 1, n_head_kv, n_tokens);
