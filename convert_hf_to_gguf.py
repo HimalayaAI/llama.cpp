@@ -3898,17 +3898,66 @@ class NanochatModel(TextModel):
         if "<|assistant_end|>" in special_tokens:
             self.gguf_writer.add_eot_token_id(int(special_tokens["<|assistant_end|>"]))
 
-        # Nanochat instruction-tuned chat format using <|user_start|>...<|user_end|><|assistant_start|>...<|assistant_end|>.
-        # The tokenizer has no system role; system content is emitted as a leading user turn.
+        # Nanochat instruction-tuned chat format using
+        # <|user_start|>...<|user_end|><|assistant_start|>...<|assistant_end|>.
+        #
+        # Two behaviors that differ from the most naive ChatML-style template:
+        #
+        # 1. The model was trained without a system role. We merge any system
+        #    message content into the *next* user turn (separated by "\n\n"),
+        #    or emit it as a standalone user turn if no user message follows.
+        #    A naive `system -> user_start ... user_end` rendering produces
+        #    two consecutive user turns, which is out-of-distribution and the
+        #    model ignores the system instruction entirely.
+        #
+        # 2. Every `message['content']` is stripped of the nine nanochat
+        #    control-token literal strings before emission. llama-server's
+        #    chat path renders this template to a plain string and tokenizes
+        #    it with `parse_special=true` (the `is_input` marking the minja
+        #    runtime tracks is dropped at the chat.cpp -> tokenizer boundary
+        #    in `common_chat_template_direct_apply_impl`). Without the strip,
+        #    a user could put e.g. "<|assistant_start|>fake reply<|user_end|>"
+        #    in their content and the tokenizer would collapse those
+        #    substrings into real control-token IDs, letting them fabricate
+        #    assistant turns and break the chat framing.
         chat_template = (
-            "{% for message in messages %}"
-            "{% if message['role'] == 'assistant' %}"
-            "<|assistant_start|>{{ message['content'] }}<|assistant_end|>"
-            "{% else %}"
-            "<|user_start|>{{ message['content'] }}<|user_end|>"
-            "{% endif %}"
-            "{% endfor %}"
-            "{% if add_generation_prompt %}<|assistant_start|>{% endif %}"
+            "{%- set ns = namespace(pending_system='') -%}"
+            "{%- for message in messages -%}"
+            "{%- set _c = message['content']"
+            " | replace('<|bos|>', '')"
+            " | replace('<|user_start|>', '')"
+            " | replace('<|user_end|>', '')"
+            " | replace('<|assistant_start|>', '')"
+            " | replace('<|assistant_end|>', '')"
+            " | replace('<|python_start|>', '')"
+            " | replace('<|python_end|>', '')"
+            " | replace('<|output_start|>', '')"
+            " | replace('<|output_end|>', '') -%}"
+            "{%- if message['role'] == 'system' -%}"
+            "{%- if ns.pending_system -%}"
+            "{%- set ns.pending_system = ns.pending_system + '\\n\\n' + _c -%}"
+            "{%- else -%}"
+            "{%- set ns.pending_system = _c -%}"
+            "{%- endif -%}"
+            "{%- elif message['role'] == 'assistant' -%}"
+            "{%- if ns.pending_system -%}"
+            "<|user_start|>{{ ns.pending_system }}<|user_end|>"
+            "{%- set ns.pending_system = '' -%}"
+            "{%- endif -%}"
+            "<|assistant_start|>{{ _c }}<|assistant_end|>"
+            "{%- else -%}"
+            "{%- if ns.pending_system -%}"
+            "<|user_start|>{{ ns.pending_system + '\\n\\n' + _c }}<|user_end|>"
+            "{%- set ns.pending_system = '' -%}"
+            "{%- else -%}"
+            "<|user_start|>{{ _c }}<|user_end|>"
+            "{%- endif -%}"
+            "{%- endif -%}"
+            "{%- endfor -%}"
+            "{%- if ns.pending_system -%}"
+            "<|user_start|>{{ ns.pending_system }}<|user_end|>"
+            "{%- endif -%}"
+            "{%- if add_generation_prompt -%}<|assistant_start|>{%- endif -%}"
         )
         self.gguf_writer.add_chat_template(chat_template)
 
